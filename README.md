@@ -23,7 +23,7 @@
 
 | 包 | 说明 |
 |---|---|
-| `biz/bot` | IM 机器人统一门面（企微/钉钉/飞书/蓝信），`BotOne` 接口 + 安全模式 |
+| `biz/bot` | IM 机器人统一门面（企微/钉钉/飞书/蓝信）：`BotOne` 发送路径 + `payload.go` 纯载荷构造（`BuildIMPayload` 按渠道分发） |
 | `biz/email` | SMTP 发送器 |
 | `biz/git` | 本地 git 仓库分支/标签读写与打 tag 推送 |
 | `biz/online-git` | GitHub / GitLab / Gitea 平台统一 API 门面（provider 注册表） |
@@ -36,8 +36,9 @@
 
 | 包 | 说明 | 来源 |
 |---|---|---|
-| `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 |
-| `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 |
+| `biz/bot`（`payload.go`） | IM 载荷构造——企微/钉钉/飞书 JSON 线格式单源，纯函数零网络 | oekit/pkg#485 / gopkg#1 |
+| `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 / gopkg#2 |
+| `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 / gopkg#3 |
 
 ## 依赖 oekit 的重构（2026-11-14）
 
