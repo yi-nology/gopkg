@@ -1,0 +1,65 @@
+name: ci
+
+# 触发面：push main、打出去的 tag、PR。
+#
+# tag 必须跑：发出去的 tag 必须能编译——CI 还红就打 tag，会让
+# `go get github.com/yi-nology/gopkg@vX.Y.Z` 直接编译失败而没人收到通知
+# （jumpserver-kit 踩过：v0.3.0 在 CI 红时打出去，tag 缺一个源码文件）。
+#
+# 刻意不用 paths 过滤：required context 的 job 被 paths 过滤成 skip 时会
+# 永远停在 Expected，把合并卡死（goagent-kernel ci.yml 同款纪律）。
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 门禁本体与本地一致（README「开发」节同一组命令），CI 只是执行它。
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "gofmt 需要格式化以下文件："
+            echo "$out"
+            exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      # -race：本仓有并发原语（bot/online-git 客户端被多 goroutine 共享），
+      # 竞态只在跑起来时才说话。runner 自带 gcc，缺编译器会明确变红而非静默跳过。
+      - name: test
+        run: go test ./... -count=1 -race
+
+      # 依赖方向：业务 org 依赖框架 org 是正向；反向（oekit 依赖本仓）是事故。
+      # 这里只钉住本仓不 import 自己的 internal 之外的 yi-nology 仓以外的东西——
+      # 真正的矩阵依赖审计在 oekit/matrix-tools，本条是本地快速兜底。
+      - name: no self-import
+        run: |
+          if go list -deps ./... | grep -q 'github.com/yi-nology/common'; then
+            echo "仍依赖已归档的 yi-nology/common——应改为 import 本仓或 oekit"
+            exit 1
+          fi
