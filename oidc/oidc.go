@@ -29,6 +29,9 @@ var (
 	ErrFlowInvalid = errors.New("oidc: flow state 无效或已过期")
 	// ErrProvider IdP 发现文档/JWKS/token 端点交互失败。
 	ErrProvider = errors.New("oidc: IdP 端点交互失败")
+	// ErrStateStore flow state 存储（StateStore）交互失败——与 state 不存在/
+	// 已过期（ErrFlowInvalid）区分，宿主可据此判基础设施故障而非登录失败。
+	ErrStateStore = errors.New("oidc: flow state 存储交互失败")
 	// ErrIDToken id_token 形态、签名或声明校验失败。
 	ErrIDToken = errors.New("oidc: id_token 校验失败")
 	// ErrUnknownKey JWKS 刷新后仍无 token 头部声明的 kid。
@@ -46,7 +49,8 @@ const (
 // Config OIDC 客户端配置。Issuer/ClientID/ClientSecret 是启停三要素
 // （任一空 = 整体关闭）。Scopes 缺省 openid profile email；UsernameClaim
 // 缺省 preferred_username。HTTPClient/Now 是宿主测试与代理注入点，零值
-// 分别落 10s 超时与 time.Now。
+// 分别落 10s 超时与 time.Now。StateStore 是 flow state 存储注入点，nil =
+// 进程内 MemoryStateStore（单机行为不变）。
 type Config struct {
 	Issuer       string
 	ClientID     string
@@ -57,7 +61,11 @@ type Config struct {
 
 	HTTPClient *http.Client
 
-	FlowTTL      time.Duration
+	FlowTTL time.Duration
+	// StateStore flow state 跨副本载体；nil = 进程内 MemoryStateStore。
+	// 多副本无粘性会话时由宿主注入共享实现（DB/Redis）——Take 必须是原子
+	// 单次消费（DB: DELETE ... RETURNING / Redis: GETDEL）。
+	StateStore   StateStore
 	DiscoveryTTL time.Duration
 	JWKSTTL      time.Duration
 	Now          func() time.Time
@@ -90,26 +98,101 @@ type discoveryDoc struct {
 	Issuer                string `json:"issuer"`
 }
 
-// flow 一次登录流转的服务端态（state → nonce/PKCE/宿主收编锚点）。
-type flow struct {
-	Nonce     string
-	Verifier  string
-	Anchor    string
-	CreatedAt time.Time
+// Flow 一次登录流转的服务端态快照（StateStore 的存储单元）：state → nonce/
+// PKCE verifier/宿主收编锚点/创建时刻。字段全部导出，宿主可原样序列化到
+// DB/Redis。Verifier 是 PKCE 机密，存储侧应限权/加密。
+type Flow struct {
+	Nonce     string    `json:"nonce"`
+	Verifier  string    `json:"verifier"`
+	Anchor    string    `json:"anchor,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// StateStore flow state 跨副本载体（Config.StateStore 注入点）。
+//
+// Save 写入本次 flow；ttl 交给实现方做过期策略。Take 必须是原子单次消费：
+// 同一 state 无论并发还是重复调用，只有一次返回 ok=true，其余返回
+// (Flow{}, false, nil)（DB: DELETE ... RETURNING；Redis: GETDEL）。
+//
+// Take 返回 error 表示存储故障——Client 包装 ErrStateStore；ok=false 且
+// error=nil 才表示 state 不存在/已过期——Client 返回 ErrFlowInvalid。
+type StateStore interface {
+	Save(ctx context.Context, state string, f Flow, ttl time.Duration) error
+	Take(ctx context.Context, state string) (Flow, bool, error)
+}
+
+// MemoryStateStore 进程内 StateStore 实现（并发安全、零值可用）。TTL 在
+// Save 时落过期时刻（零值用墙钟；Client 的 nil 默认实现复用自身 Now，
+// 保持旧行为），Take/Save 惰性剔除。Client 侧仍会用 Flow.CreatedAt 复核
+// FlowTTL——本实现的过期只是内存回收，不是唯一防线。
+type MemoryStateStore struct {
+	mu      sync.Mutex
+	entries map[string]memoryState
+	now     func() time.Time // nil = time.Now（Client 默认注入自身时钟）
+}
+
+// memoryState 进程内条目（flow + 过期时刻）。
+type memoryState struct {
+	flow      Flow
+	expiresAt time.Time
+}
+
+// NewMemoryStateStore 构造进程内 StateStore。多个 Client 共享同一实例即可
+// 跨客户端消费；跨进程共享仍需宿主实现 StateStore（DB/Redis）。
+func NewMemoryStateStore() *MemoryStateStore { return &MemoryStateStore{} }
+
+// clockNow 取过期判定时钟（零值落 time.Now）。
+func (m *MemoryStateStore) clockNow() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
+}
+
+// Save 实现 StateStore（惰性 GC 过期条目，免后台协程）。
+func (m *MemoryStateStore) Save(_ context.Context, state string, f Flow, ttl time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.clockNow()
+	if m.entries == nil {
+		m.entries = make(map[string]memoryState)
+	}
+	for k, e := range m.entries {
+		if now.After(e.expiresAt) {
+			delete(m.entries, k)
+		}
+	}
+	m.entries[state] = memoryState{flow: f, expiresAt: now.Add(ttl)}
+	return nil
+}
+
+// Take 实现 StateStore：删除并返回（原子单次消费，过期条目同样删除）。
+func (m *MemoryStateStore) Take(_ context.Context, state string) (Flow, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.entries[state]
+	if !ok {
+		return Flow{}, false, nil
+	}
+	delete(m.entries, state)
+	if m.clockNow().After(e.expiresAt) {
+		return Flow{}, false, nil
+	}
+	return e.flow, true, nil
 }
 
 // Client IdP 往来客户端（并发安全；discovery/JWKS 进程内缓存）。
 type Client struct {
-	cfg  Config
-	http *http.Client
-	now  func() time.Time
+	cfg   Config
+	http  *http.Client
+	now   func() time.Time
+	store StateStore
 
 	mu      sync.Mutex
 	disco   *discoveryDoc
 	discoAt time.Time
 	keys    map[string]*rsa.PublicKey
 	keysAt  time.Time
-	flows   map[string]flow
 }
 
 // New 构造客户端；不拨网（首次 BeginLogin/CompleteLogin 惰性发现）。
@@ -131,12 +214,18 @@ func New(cfg Config) *Client {
 	if nowFn == nil {
 		nowFn = time.Now
 	}
+	store := cfg.StateStore
+	if store == nil {
+		// 默认内存实现复用 Client 时钟，保证 StateStore=nil 与旧行为一致
+		// （含宿主注入 Now 的测试/回放场景）。
+		store = &MemoryStateStore{now: nowFn}
+	}
 	return &Client{
 		cfg:   cfg,
 		http:  hc,
 		now:   nowFn,
+		store: store,
 		keys:  map[string]*rsa.PublicKey{},
-		flows: map[string]flow{},
 	}
 }
 
@@ -168,10 +257,10 @@ func (c *Client) BeginLogin(ctx context.Context, redirectURI, anchor string) (st
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(verifier))
-	c.mu.Lock()
-	c.gcLocked()
-	c.flows[state] = flow{Nonce: nonce, Verifier: verifier, Anchor: anchor, CreatedAt: c.now()}
-	c.mu.Unlock()
+	f := Flow{Nonce: nonce, Verifier: verifier, Anchor: anchor, CreatedAt: c.now()}
+	if err := c.store.Save(ctx, state, f, c.cfg.FlowTTL); err != nil {
+		return "", fmt.Errorf("%w: flow state 保存失败: %w", ErrStateStore, err)
+	}
 
 	q := url.Values{
 		"response_type":         {"code"},
@@ -203,12 +292,13 @@ func (c *Client) CompleteLogin(ctx context.Context, code, state, redirectURI str
 	if !c.cfg.Enabled() {
 		return nil, ErrDisabled
 	}
-	c.mu.Lock()
-	f, ok := c.flows[state]
-	if ok {
-		delete(c.flows, state) // 单次消费：重放同一 state 直接落空
+	f, ok, err := c.store.Take(ctx, state)
+	if err != nil {
+		// Store 故障与 state 不存在/过期（ErrFlowInvalid）分开，宿主可判 5xx。
+		return nil, fmt.Errorf("%w: flow state 读取失败: %w", ErrStateStore, err)
 	}
-	c.mu.Unlock()
+	// 单次消费由 Store.Take 保证；此处再用 CreatedAt 复核 TTL，防御 Store
+	// 过期策略失效（多副本共享后端的常见坑）。
 	if !ok || c.now().Sub(f.CreatedAt) > c.cfg.FlowTTL {
 		return nil, ErrFlowInvalid
 	}
@@ -510,14 +600,4 @@ func randomHex(n int) (string, error) {
 		return "", fmt.Errorf("oidc: 系统熵源故障: %w", err)
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// gcLocked 清过期流转态（调用方持锁；惰性 GC 免后台协程）。
-func (c *Client) gcLocked() {
-	now := c.now()
-	for k, f := range c.flows {
-		if now.Sub(f.CreatedAt) > c.cfg.FlowTTL {
-			delete(c.flows, k)
-		}
-	}
 }

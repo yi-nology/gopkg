@@ -21,8 +21,10 @@
 // 验签失败一律返回类型化哨兵错误（ErrSignatureInvalid / ErrExpired /
 // ErrRevoked），消费方一律 errors.Is 判定，不要匹配错误文本。本包不做任何
 // 静默降级：「降级不静默」的机制语义由 Load 兑现——非有效形态必带 Reason
-// 可观测；「无效 license 拿不到授权能力」由宿主把 Status.Valid 映射到自己的
-// 档位来兑现（community/enterprise 分支与能力词表是产品决策，留在宿主）。
+// 人读文案 + Err 原始错误链可观测（文件缺失/读取失败/解析失败各挂
+// ErrNoFile / ErrUnreadable / ErrParseFailed，签名/生命周期挂上述哨兵）；
+// 「无效 license 拿不到授权能力」由宿主把 Status.Valid 映射到自己的档位来
+// 兑现（community/enterprise 分支与能力词表是产品决策，留在宿主）。
 //
 // # 典型用法
 //
@@ -39,7 +41,11 @@
 //	// 验签侧（产品二进制，公钥编译进宿主）：
 //	st := licensx.Load("/etc/app/license.json", compiledPub, time.Now())
 //	if !st.Valid {
-//	    // community 档位运行，st.Reason 透出原因（不静默）
+//	    // community 档位运行；st.Reason 给人读，st.Err 给分型判定：
+//	    switch {
+//	    case errors.Is(st.Err, licensx.ErrExpired):
+//	    case errors.Is(st.Err, licensx.ErrSignatureInvalid):
+//	    }
 //	}
 //	var claims hostClaims
 //	err = json.Unmarshal(st.Payload, &claims) // 载荷按宿主结构解码
