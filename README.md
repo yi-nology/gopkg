@@ -21,9 +21,16 @@
 
 | 包 | 说明 | 来源 |
 |---|---|---|
+| `approval` | 审批流状态机：Submit/Decide/Await/Sweep，deny-by-default、审批分离、L4 双确认、执行凭据一次性核销（token 面复用 `tokenx`） | bianque `internal/service/approval`（gopkg#13） |
 | `bot` | IM 机器人统一门面（企微/钉钉/飞书/蓝信）：`BotOne` 发送路径 + `payload.go` 纯载荷构造（`BuildIMPayload` 按渠道分发，纯函数零网络） | common/biz/bot 接档 + oekit/pkg#485 改道（gopkg#1） |
 | `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 改道（gopkg#2） |
+| `oidc` | OIDC 登录客户端：发现文档 + PKCE S256 + code 交换 + RS256 JWKS 验签（未知 kid 强刷一次）+ nonce 对账 + flow state TTL | bianque `internal/auth/oidc.go`（gopkg#8） |
+| `privacy` | GDPR 数据主体导出/删除骨架：归属键注册表（export/erase/anonymize/exempt）+ 字段剔除 + 分块删 + 墓碑 | bianque `internal/repo/repo_userdata.go`（gopkg#16） |
 | `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 改道（gopkg#3） |
+
+2026-11-15 三件业务内核从 bianque 下沉（[#8](../../issues/8) / [#13](../../issues/13) / [#16](../../issues/16)）：
+`oidc` / `approval` / `privacy` 均落顶层包（incubator 期写 `biz/<x>` 的约定已废止），
+存储、IM 推送、账号映射与审计词表等宿主侧资产不入仓。
 
 `bot` 自 `biz/bot` 提升为顶层包（2026-11-15）：业务侧的「平台线格式契约」归它一个门面，
 其余承自 `common/biz/*` 的模块经核查**全仓零引用**，已删除（见下方「与 common 的关系」）。
