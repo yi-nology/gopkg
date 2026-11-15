@@ -40,7 +40,7 @@ func run(t *testing.T, host Host, opts Options, lines ...string) []map[string]js
 	t.Helper()
 	var out strings.Builder
 	in := strings.NewReader(strings.Join(lines, "\n") + "\n")
-	if err := Serve(context.Background(), in, &out, host, opts); err != nil {
+	if err := Serve(in, &out, host, opts); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	var frames []map[string]json.RawMessage

@@ -177,8 +177,14 @@ func (b *Bridge) Handle(method string, h MethodHandler) {
 	}
 }
 
-// Serve 包级入口：构造一次性 Bridge 并在 ctx 下处理 stdio。返回 nil 于 EOF。
-func Serve(ctx context.Context, in io.Reader, out io.Writer, host Host, opts Options) error {
+// Serve 包级入口：构造一次性 Bridge 并处理 stdio（context.Background）。
+// 返回 nil 于 EOF。
+func Serve(in io.Reader, out io.Writer, host Host, opts Options) error {
+	return New(host, opts).Serve(context.Background(), in, out)
+}
+
+// ServeContext 可取消版本：ctx 取消后，进行中的 host 调用随 ctx 收敛。
+func ServeContext(ctx context.Context, in io.Reader, out io.Writer, host Host, opts Options) error {
 	return New(host, opts).Serve(ctx, in, out)
 }
 
