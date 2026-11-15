@@ -255,6 +255,12 @@ func (w *WecomChannel) Probe() error {
 // Send 应用消息推送（touser=subject；access_token 缓存至过期前 5 分钟）。
 func (w *WecomChannel) Send(subject, chatType, text string) error {
 	_ = chatType // 应用消息按 touser 投递，p2p/group 同路
+	w.mu.Lock()
+	closed := w.closed
+	w.mu.Unlock()
+	if closed {
+		return ErrClosed
+	}
 	tok, err := w.accessToken()
 	if err != nil {
 		return err

@@ -391,6 +391,9 @@ func (q *QQChannel) Send(subject, chatType, text string) error {
 	if text == "" {
 		return nil
 	}
+	if q.isClosed() {
+		return ErrClosed
+	}
 	q.msgMu.Lock()
 	msgID := q.lastMsg[subject]
 	seq := 0

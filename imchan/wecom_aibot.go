@@ -147,11 +147,10 @@ type WecomAibotChannel struct {
 	clock   Clock
 	backoff Backoff
 
-	stateMu    sync.Mutex
-	connected  bool
-	closed     bool
-	hbInterval time.Duration
-	conn       *websocket.Conn // 当前连接快照（Send 写侧；随 runSession 生命周期挂摘）
+	stateMu   sync.Mutex
+	connected bool
+	closed    bool
+	conn      *websocket.Conn // 当前连接快照（Send 写侧；随 runSession 生命周期挂摘）
 
 	closeCh   chan struct{}
 	closeOnce sync.Once
@@ -215,7 +214,7 @@ func (w *WecomAibotChannel) Start(ctx context.Context, handler func(InboundMessa
 		Backoff: w.backoff,
 		Clock:   w.clock,
 		Fatal: func(err error) error {
-			if errors.Is(err, ErrAibotAuth) {
+			if isAibotAuthErr(err) {
 				authFails++
 				if authFails >= wecomAibotMaxAuthFail {
 					return fmt.Errorf("通道 %s 连续认证失败 %d 次（凭证被吊销？）: %w", w.id, authFails, err)
@@ -277,7 +276,6 @@ func (w *WecomAibotChannel) runSession(ctx context.Context, handler func(Inbound
 	}
 	w.stateMu.Lock()
 	w.connected = true
-	w.hbInterval = hb
 	w.stateMu.Unlock()
 
 	// 心跳协程（写侧经 writeMu 串行；写失败=断链，cancel 收敛）。
@@ -376,6 +374,9 @@ func (w *WecomAibotChannel) dispatch(f aibotFrame, handler func(InboundMessage))
 func (w *WecomAibotChannel) Send(subject, chatType, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
+	}
+	if w.isClosed() {
+		return ErrClosed
 	}
 	if !w.Connected() {
 		return fmt.Errorf("企微智能机器人通道未连接（断链重连中；该轮回投失败显形）")
