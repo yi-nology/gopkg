@@ -24,6 +24,7 @@
 | `bot` | IM 机器人统一门面（企微/钉钉/飞书/蓝信）：`BotOne` 发送路径 + `payload.go` 纯载荷构造（`BuildIMPayload` 按渠道分发，纯函数零网络） | common/biz/bot 接档 + oekit/pkg#485 改道（gopkg#1） |
 | `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 改道（gopkg#2） |
 | `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 改道（gopkg#3） |
+| `gdpr` | GDPR 数据主体权利面骨架：归属键注册制（export/erase/anonymize/exempt 策略位）+ 分块删除/墓碑幂等 + fail-closed 凭证字段脱敏 | 下沉提案（gopkg#16） |
 
 `bot` 自 `biz/bot` 提升为顶层包（2026-11-15）：业务侧的「平台线格式契约」归它一个门面，
 其余承自 `common/biz/*` 的模块经核查**全仓零引用**，已删除（见下方「与 common 的关系」）。
