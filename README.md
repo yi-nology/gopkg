@@ -24,6 +24,9 @@
 | `bot` | IM 机器人统一门面（企微/钉钉/飞书/蓝信）：`BotOne` 发送路径 + `payload.go` 纯载荷构造（`BuildIMPayload` 按渠道分发，纯函数零网络） | common/biz/bot 接档 + oekit/pkg#485 改道（gopkg#1） |
 | `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 改道（gopkg#2） |
 | `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 改道（gopkg#3） |
+| `eventsrc` | 通用 webhook 事件源五段管道（鉴权→限频→过滤→模板→留痕）：Bearer/HMAC 二选一鉴权、每源滑动窗口、`eq/ne/contains/exists/regex` 过滤、`{{path}}` 模板、留痕与拒绝原因词表；`SourceStore`/`EventStore`/`Sink` 由宿主实现，管理面 CRUD/密钥轮换/清扫随包 | bianque internal/service/webhook 下沉（gopkg#14） |
+| `ticket` | 工单域适配器：Jira REST（评论/创建/流转/JQL 分页搜索，Cloud/Server 同构）+ PagerDuty Events v2 备注；`Poller` 逐源串行取单骨架（唯一索引去重、单源失败不阻塞） | bianque internal/service/ticket 下沉（gopkg#15） |
+| `credstage` | 凭证物化 Stager：`type:*`/`type:name` 引用解析、via 递归与环检测、原子落盘+写-后-剪、env 组装；渲染族 Interpolate/SSH/datasource/kubeconfig；加密面与类型词表由宿主注入 | bianque internal/credentials stage+render 下沉（gopkg#18） |
 
 `bot` 自 `biz/bot` 提升为顶层包（2026-11-15）：业务侧的「平台线格式契约」归它一个门面，
 其余承自 `common/biz/*` 的模块经核查**全仓零引用**，已删除（见下方「与 common 的关系」）。
