@@ -31,6 +31,8 @@
 | `kbgroup` | 知识组键提取与团队档路径判定：案例标题行 → 组键（去空白+小写归一）单源，写入去重与存量清理共用；`TeamSlugOf` 统一团队档路径语义（防跨队泄漏） | bianque `internal/kbgroup` 下沉（gopkg#10） |
 | `alertroute` | 告警入站判定核：标签路由匹配（空白路由=全匹配、坏 JSON=不命中）+ `(fingerprint, starts_at)` 幂等键（精确锚点，非滑动窗口） | bianque `internal/service/alert` 下沉（gopkg#9） |
 | `diagbundle` | 一键诊断支持包骨架：分节注册/遍历、配置白名单摘要与 URL 布尔化、事件截断、审计链校验结果/错误入包 | bianque `internal/service/hostdiag` 下沉（gopkg#17） |
+| `acp` | ACP（Agent Client Protocol）入站桥：stdio 换行分帧 JSON-RPC 2.0 + initialize/session/new/session/prompt 方法路由；宿主交互三方法 `Host` 注入，进程 I/O 可注入 | bianque `internal/acp` 下沉（gopkg#12） |
+| `openaicompat` | OpenAI 兼容 API 网关面：chat/completions 请求/响应/流式帧纯函数映射；事件总线 `EventSource` 与宿主会话 `Host` 双接口注入（不引外部 bus 实现） | bianque `internal/openaicompat` 下沉（gopkg#11） |
 
 下沉提案里的 `biz/<x>` 目标包按本仓已废弃 `biz/*` 的约定落顶层 `<x>/`（与 `bot` 提升同律）。
 
