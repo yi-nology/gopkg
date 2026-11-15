@@ -27,6 +27,10 @@ var (
 	ErrDisabled = errors.New("oidc: 三要素（issuer/client_id/client_secret）未配置，OIDC 关闭")
 	// ErrFlowInvalid state 不存在、已消费或已超过 FlowTTL。
 	ErrFlowInvalid = errors.New("oidc: flow state 无效或已过期")
+	// ErrStateStore 注入 StateStore 形态下的载体读写失败（gopkg#29）——
+	// 区别于 ErrFlowInvalid：前者是基础设施故障（可重试/告警），后者是
+	// 「state 不存在/已消费/已过期」的正常业务否决。
+	ErrStateStore = errors.New("oidc: flow state 载体读写失败")
 	// ErrProvider IdP 发现文档/JWKS/token 端点交互失败。
 	ErrProvider = errors.New("oidc: IdP 端点交互失败")
 	// ErrIDToken id_token 形态、签名或声明校验失败。
@@ -42,6 +46,79 @@ const (
 	DefaultJWKSTTL      = time.Hour
 	defaultHTTPTimeout  = 10 * time.Second
 )
+
+// StateStore 跨副本 flow state 载体（gopkg#29）：无粘性负载均衡下，登录
+// 回调可能落到与 BeginLogin 不同的副本——进程内 map 必现 ErrFlowInvalid
+// （拓扑决定的失败概率，不是偶发网络问题）。注入同一载体（DB/Redis/任意
+// 共享存储）后回调落任何副本都能对账。
+//
+// 实现方契约：
+//   - Take 必须原子单次消费（DB: DELETE ... RETURNING / Redis: GETDEL）——
+//     重放同一 state 第二次 Take 落空（防重放语义由载体兜底）；
+//   - Save 的 ttl 建议按载体原生过期实现（Client 侧恒以 CreatedAt+FlowTTL
+//     复核，Store 过期策略失效也不致放行陈旧 state）；
+//   - 「state 不存在」返回 (Flow{}, false, nil) → Client 判 ErrFlowInvalid；
+//     载体读写故障返回 error → Client 包装 ErrStateStore，二者可区分。
+type StateStore interface {
+	Save(ctx context.Context, state string, f Flow, ttl time.Duration) error
+	Take(ctx context.Context, state string) (Flow, bool, error)
+}
+
+// MemoryStateStore StateStore 的进程内导出实现（gopkg#29 可选便利）：多
+// Client/测试共享同一份流转态（如网关与回调 handler 各持一个 Client）。
+// 零值可用；惰性 GC 免后台协程；Take 原子单次消费；过期键在 Save/Take 时
+// 顺带清扫。多副本部署请用 DB/Redis 等真共享载体实现 StateStore——本实现
+// 只共享进程内。
+type MemoryStateStore struct {
+	mu    sync.Mutex
+	flows map[string]memoryFlow
+}
+
+// memoryFlow 带载体侧过期的流转态条目（ttl 到期即视为不存在）。
+type memoryFlow struct {
+	f         Flow
+	expiresAt time.Time
+}
+
+// Save 实现 StateStore（ttl 到期后条目不再可见；Client 侧另有 CreatedAt
+// 复核，双保险）。
+func (s *MemoryStateStore) Save(_ context.Context, state string, f Flow, ttl time.Duration) error {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.flows == nil {
+		s.flows = make(map[string]memoryFlow)
+	}
+	s.gcLocked(now)
+	s.flows[state] = memoryFlow{f: f, expiresAt: now.Add(ttl)}
+	return nil
+}
+
+// Take 实现 StateStore：命中即删（原子单次消费，重放落空）；过期条目按
+// 不存在返回。
+func (s *MemoryStateStore) Take(_ context.Context, state string) (Flow, bool, error) {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.flows[state]
+	if ok {
+		delete(s.flows, state)
+	}
+	s.gcLocked(now)
+	if !ok || now.After(e.expiresAt) {
+		return Flow{}, false, nil
+	}
+	return e.f, true, nil
+}
+
+// gcLocked 清过期条目（调用方持锁）。
+func (s *MemoryStateStore) gcLocked(now time.Time) {
+	for k, e := range s.flows {
+		if now.After(e.expiresAt) {
+			delete(s.flows, k)
+		}
+	}
+}
 
 // Config OIDC 客户端配置。Issuer/ClientID/ClientSecret 是启停三要素
 // （任一空 = 整体关闭）。Scopes 缺省 openid profile email；UsernameClaim
@@ -61,6 +138,11 @@ type Config struct {
 	DiscoveryTTL time.Duration
 	JWKSTTL      time.Duration
 	Now          func() time.Time
+
+	// StateStore 跨副本 flow state 载体（gopkg#29）。nil = 进程内 map
+	// （缺省：单机/粘性代理形态零行为变化，逐字与历史一致）。无粘性的
+	// 多副本部署让所有副本共享同一载体实现（见 StateStore 契约）。
+	StateStore StateStore
 }
 
 // Enabled 三要素齐才启用（任一空=关闭，零网络行为）。
@@ -90,8 +172,10 @@ type discoveryDoc struct {
 	Issuer                string `json:"issuer"`
 }
 
-// flow 一次登录流转的服务端态（state → nonce/PKCE/宿主收编锚点）。
-type flow struct {
+// Flow 一次登录流转的服务端态（state → nonce/PKCE/宿主收编锚点）。注入
+// StateStore 时经载体跨副本传递（gopkg#29）——导出面：宿主实现 Store 必须
+// 存得下它；CreatedAt 由 Client 侧恒复核 TTL（防御 Store 过期策略失效）。
+type Flow struct {
 	Nonce     string
 	Verifier  string
 	Anchor    string
@@ -109,7 +193,7 @@ type Client struct {
 	discoAt time.Time
 	keys    map[string]*rsa.PublicKey
 	keysAt  time.Time
-	flows   map[string]flow
+	flows   map[string]Flow // StateStore==nil 时的进程内流转态（缺省形态）
 }
 
 // New 构造客户端；不拨网（首次 BeginLogin/CompleteLogin 惰性发现）。
@@ -136,7 +220,7 @@ func New(cfg Config) *Client {
 		http:  hc,
 		now:   nowFn,
 		keys:  map[string]*rsa.PublicKey{},
-		flows: map[string]flow{},
+		flows: map[string]Flow{},
 	}
 }
 
@@ -168,10 +252,20 @@ func (c *Client) BeginLogin(ctx context.Context, redirectURI, anchor string) (st
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(verifier))
-	c.mu.Lock()
-	c.gcLocked()
-	c.flows[state] = flow{Nonce: nonce, Verifier: verifier, Anchor: anchor, CreatedAt: c.now()}
-	c.mu.Unlock()
+	f := Flow{Nonce: nonce, Verifier: verifier, Anchor: anchor, CreatedAt: c.now()}
+	if c.cfg.StateStore != nil {
+		// 跨副本载体形态（gopkg#29）：写入失败按基础设施故障上抛
+		// （ErrStateStore），不得静默降级为进程内 map——那会让回调落到
+		// 本副本才能成功，拓扑决定的必现概率又回来了。
+		if err := c.cfg.StateStore.Save(ctx, state, f, c.cfg.FlowTTL); err != nil {
+			return "", fmt.Errorf("%w: flow state 写入失败: %v", ErrStateStore, err)
+		}
+	} else {
+		c.mu.Lock()
+		c.gcLocked()
+		c.flows[state] = f
+		c.mu.Unlock()
+	}
 
 	q := url.Values{
 		"response_type":         {"code"},
@@ -196,20 +290,33 @@ type Result struct {
 	Claims   map[string]any
 }
 
-// CompleteLogin 回调收口：state 对账（单次+TTL，防重放）→ code 换 token
-// （PKCE verifier + 机密客户端凭据）→ ID token RS256/JWKS 验签
-// （iss/aud/exp/nonce）→ 登录结果。
+// CompleteLogin 回调收口：state 对账（单次+TTL，防重放；注入 StateStore 时
+// 经载体跨副本取回，读故障包装 ErrStateStore 与「state 不存在」可区分，
+// gopkg#29）→ code 换 token（PKCE verifier + 机密客户端凭据）→ ID token
+// RS256/JWKS 验签（iss/aud/exp/nonce）→ 登录结果。
 func (c *Client) CompleteLogin(ctx context.Context, code, state, redirectURI string) (*Result, error) {
 	if !c.cfg.Enabled() {
 		return nil, ErrDisabled
 	}
-	c.mu.Lock()
-	f, ok := c.flows[state]
-	if ok {
-		delete(c.flows, state) // 单次消费：重放同一 state 直接落空
+	var f Flow
+	var ok bool
+	if c.cfg.StateStore != nil {
+		var err error
+		f, ok, err = c.cfg.StateStore.Take(ctx, state)
+		if err != nil {
+			// 载体读写故障 ≠ state 无效：基础设施可重试/告警，业务否决不混入。
+			return nil, fmt.Errorf("%w: flow state 读取失败: %v", ErrStateStore, err)
+		}
+	} else {
+		c.mu.Lock()
+		f, ok = c.flows[state]
+		if ok {
+			delete(c.flows, state) // 单次消费：重放同一 state 直接落空
+		}
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
 	if !ok || c.now().Sub(f.CreatedAt) > c.cfg.FlowTTL {
+		// CreatedAt 复核恒做（gopkg#29）：Store 过期策略失效也不放行陈旧 state。
 		return nil, ErrFlowInvalid
 	}
 	doc, err := c.discover(ctx)

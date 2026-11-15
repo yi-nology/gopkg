@@ -454,3 +454,108 @@ func TestNilLicenseFailLoud(t *testing.T) {
 		t.Fatal("非法私钥应报错")
 	}
 }
+
+// TestLoadTypedStatus_Issue28 类型化判定面（gopkg#28）：非 Valid 形态的
+// Status.Err 必须可 errors.Is 按类型分流（签名/过期/吊销/未配置/不存在/
+// 解析失败），Reason 文案与既有形态一致（现有消费方零破坏）；Err 字段
+// json:"-" 不破坏序列化；完全有效时 Err 为 nil。
+func TestLoadTypedStatus_Issue28(t *testing.T) {
+	pub, priv := testKeyPair(t)
+	dir := t.TempDir()
+	now := baseTime().Add(time.Hour)
+
+	write := func(name string, l *License) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		b, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	mk := func(expiresAt *time.Time) *License {
+		t.Helper()
+		payload, err := json.Marshal(hostClaims{Customer: "acme"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l := &License{Serial: "2026-001", IssuedAt: baseTime(), ExpiresAt: expiresAt, Payload: payload}
+		if err := Sign(l, priv); err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	future := baseTime().Add(24 * time.Hour)
+
+	t.Run("过期 → errors.Is(ErrExpired)", func(t *testing.T) {
+		past := baseTime().Add(-time.Hour)
+		st := Load(write("expired.json", mk(&past)), pub, now)
+		if st.Valid || st.Err == nil || !errors.Is(st.Err, ErrExpired) {
+			t.Fatalf("st.Err 应挂 ErrExpired 哨兵: valid=%v err=%v", st.Valid, st.Err)
+		}
+		if st.Reason == "" {
+			t.Fatal("Reason 文案保留（不静默）")
+		}
+	})
+	t.Run("篡改 → errors.Is(ErrSignatureInvalid)", func(t *testing.T) {
+		l := mk(&future)
+		l.Serial = "tampered"
+		st := Load(write("tampered.json", l), pub, now)
+		if st.Valid || st.Err == nil || !errors.Is(st.Err, ErrSignatureInvalid) {
+			t.Fatalf("st.Err 应挂 ErrSignatureInvalid 哨兵: valid=%v err=%v", st.Valid, st.Err)
+		}
+	})
+	t.Run("吊销 → errors.Is(ErrRevoked)", func(t *testing.T) {
+		st := Load(write("revoked.json", mk(&future)), pub, now, WithRevokedSerials([]string{"2026-001"}))
+		if st.Valid || st.Err == nil || !errors.Is(st.Err, ErrRevoked) {
+			t.Fatalf("st.Err 应挂 ErrRevoked 哨兵: valid=%v err=%v", st.Valid, st.Err)
+		}
+	})
+	t.Run("未配置 → errors.Is(ErrNotConfigured)", func(t *testing.T) {
+		st := Load("", pub, now)
+		if st.Valid || st.Err == nil || !errors.Is(st.Err, ErrNotConfigured) {
+			t.Fatalf("st.Err 应挂 ErrNotConfigured 哨兵: valid=%v err=%v", st.Valid, st.Err)
+		}
+	})
+	t.Run("文件不存在 → errors.Is(os.ErrNotExist)", func(t *testing.T) {
+		st := Load(filepath.Join(dir, "nope.json"), pub, now)
+		if st.Valid || st.Err == nil || !errors.Is(st.Err, os.ErrNotExist) {
+			t.Fatalf("st.Err 应挂 os.ErrNotExist 哨兵: valid=%v err=%v", st.Valid, st.Err)
+		}
+	})
+	t.Run("解析失败 → Err 携带底层 json 错误", func(t *testing.T) {
+		p := filepath.Join(dir, "bad.json")
+		if err := os.WriteFile(p, []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		st := Load(p, pub, now)
+		if st.Valid || st.Err == nil {
+			t.Fatalf("解析失败应携带 Err: valid=%v err=%v", st.Valid, st.Err)
+		}
+	})
+	t.Run("有效 → Err 为 nil", func(t *testing.T) {
+		st := Load(write("good.json", mk(&future)), pub, now)
+		if !st.Valid || st.Err != nil {
+			t.Fatalf("有效形态 Err 应为 nil: valid=%v err=%v", st.Valid, st.Err)
+		}
+	})
+	t.Run("Status 可 json 序列化（Err json:\"-\" 不破坏诊断面输出）", func(t *testing.T) {
+		past := baseTime().Add(-time.Hour)
+		for name, st := range map[string]Status{
+			"expired":  Load(write("exp2.json", mk(&past)), pub, now),
+			"valid":    Load(write("good2.json", mk(&future)), pub, now),
+			"noconfig": Load("", pub, now),
+		} {
+			b, err := json.Marshal(st)
+			if err != nil {
+				t.Fatalf("%s: Marshal 不应因 Err 字段失败: %v", name, err)
+			}
+			if strings.Contains(string(b), "err") {
+				t.Fatalf("%s: Err 字段不应参与序列化: %s", name, b)
+			}
+		}
+	})
+}

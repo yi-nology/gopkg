@@ -701,3 +701,120 @@ func TestNumericDateStringForm(t *testing.T) {
 		t.Error("bool 不应解为 NumericDate")
 	}
 }
+
+// --- gopkg#29 StateStore 存储接缝 ---
+
+// TestStateStoreSharedAcrossClients_Issue29 验收主形态：两个 Client 共享同一
+// StateStore——A BeginLogin、B CompleteLogin 成功（跨副本对账）；Take 原子
+// 单次消费（二次调用落空、重放同一 state 落 ErrFlowInvalid）。
+func TestStateStoreSharedAcrossClients_Issue29(t *testing.T) {
+	i := newIDP(t)
+	store := &MemoryStateStore{}
+	a := newTestClient(i, func(cfg *Config) { cfg.StateStore = store })
+	b := newTestClient(i, func(cfg *Config) { cfg.StateStore = store })
+	_, state, nonce, _ := begin(t, a, "anchor-x")
+	i.setNonce(nonce)
+	res, err := complete(b, state)
+	if err != nil {
+		t.Fatalf("跨 Client 对账应成功: %v", err)
+	}
+	if res.Anchor != "anchor-x" {
+		t.Fatalf("Anchor = %q, want anchor-x（流转态经载体透传）", res.Anchor)
+	}
+	// 单次消费：载体里已取走，重放同一 state 直接落空。
+	if _, _, err := store.Take(context.Background(), state); err != nil {
+		t.Fatalf("Take 不应报错: %v", err)
+	}
+	if _, ok, _ := store.Take(context.Background(), state); ok {
+		t.Fatal("二次 Take 应落空（原子单次消费）")
+	}
+	if _, err := complete(b, state); !errors.Is(err, ErrFlowInvalid) {
+		t.Fatalf("重放 err = %v, want ErrFlowInvalid", err)
+	}
+}
+
+// TestStateStoreReadFailure_Issue29 载体读故障与「state 不存在」可区分：
+// 前者 ErrStateStore（基础设施故障，可重试/告警），后者 ErrFlowInvalid；
+// BeginLogin 侧写入失败同样 ErrStateStore，不得静默降级进程内 map。
+type failingStore struct{ failSave, failTake bool }
+
+func (s *failingStore) Save(context.Context, string, Flow, time.Duration) error {
+	if s.failSave {
+		return errors.New("db down")
+	}
+	return nil
+}
+
+func (s *failingStore) Take(context.Context, string) (Flow, bool, error) {
+	if s.failTake {
+		return Flow{}, false, errors.New("db down")
+	}
+	return Flow{}, false, nil
+}
+
+func TestStateStoreReadFailure_Issue29(t *testing.T) {
+	i := newIDP(t)
+	c := newTestClient(i, func(cfg *Config) { cfg.StateStore = &failingStore{failTake: true} })
+	_, state, _, _ := begin(t, c, "")
+	_, err := complete(c, state)
+	if !errors.Is(err, ErrStateStore) {
+		t.Fatalf("读故障 err = %v, want ErrStateStore", err)
+	}
+	if errors.Is(err, ErrFlowInvalid) {
+		t.Fatal("读故障不得混入 ErrFlowInvalid（二者必须可区分）")
+	}
+
+	c2 := newTestClient(i, func(cfg *Config) { cfg.StateStore = &failingStore{failSave: true} })
+	if _, err := c2.BeginLogin(context.Background(), "https://app/cb", ""); !errors.Is(err, ErrStateStore) {
+		t.Fatalf("写失败 err = %v, want ErrStateStore", err)
+	}
+
+	// 同型 store 正常返回 (zero,false,nil) → 走 ErrFlowInvalid（state 不存在）。
+	c3 := newTestClient(i, func(cfg *Config) { cfg.StateStore = &failingStore{} })
+	if _, err := complete(c3, "never-issued"); !errors.Is(err, ErrFlowInvalid) || errors.Is(err, ErrStateStore) {
+		t.Fatalf("不存在 err = %v, want ErrFlowInvalid 非 ErrStateStore", err)
+	}
+}
+
+// TestStateStoreTTLRecheck_Issue29 Client 侧恒以 CreatedAt+FlowTTL 复核：
+// 载体命中但流转态陈旧（Store 过期策略失效场景）仍判 ErrFlowInvalid——
+// 防线不外包给 Store。
+func TestStateStoreTTLRecheck_Issue29(t *testing.T) {
+	i := newIDP(t)
+	store := &MemoryStateStore{}
+	c := newTestClient(i, func(cfg *Config) { cfg.StateStore = store })
+	stale := Flow{
+		Nonce: "n", Verifier: "v", Anchor: "a",
+		CreatedAt: time.Now().Add(-2 * DefaultFlowTTL),
+	}
+	// 载体侧 ttl 很长（Store 过期策略失效模拟）。
+	err := store.Save(context.Background(), "stale", stale, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := complete(c, "stale"); !errors.Is(err, ErrFlowInvalid) {
+		t.Fatalf("陈旧 state err = %v, want ErrFlowInvalid（CreatedAt 复核恒做）", err)
+	}
+}
+
+// TestMemoryStateStore_Issue29 导出实现自身契约：零值可用、单次消费、
+// 载体侧 ttl 过期后不可见。
+func TestMemoryStateStore_Issue29(t *testing.T) {
+	var s MemoryStateStore // 零值可用
+	ctx := context.Background()
+	if err := s.Save(ctx, "k1", Flow{Nonce: "n"}, time.Minute); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, ok, err := s.Take(ctx, "k1"); err != nil || !ok {
+		t.Fatalf("首次 Take 应命中: ok=%v err=%v", ok, err)
+	}
+	if _, ok, _ := s.Take(ctx, "k1"); ok {
+		t.Fatal("二次 Take 应落空")
+	}
+	if err := s.Save(ctx, "k2", Flow{Nonce: "n"}, -time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.Take(ctx, "k2"); ok {
+		t.Fatal("过期条目应不可见")
+	}
+}

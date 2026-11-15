@@ -29,9 +29,12 @@
 //
 // 发现文档同样校验 issuer 精确匹配（伪造/混包防线），且 authorization/
 // token/jwks 三个端点缺一即失败。发现文档与 JWKS 进程内缓存（默认
-// 10min/1h）；flow state 是进程内 map（默认 TTL 10min + BeginLogin 时惰性
-// GC）——多副本部署需要粘性会话或宿主自行做跨副本 state 共享，单机/粘性
-// 代理形态不受影响。
+// 10min/1h）；flow state 缺省为进程内 map（默认 TTL 10min + BeginLogin 时
+// 惰性 GC）——单机/粘性代理形态不受影响；无粘性负载均衡的多副本部署注入
+// [Config.StateStore] 做跨副本共享（[StateStore] 实现方保证 Take 原子单次
+// 消费，如 DB DELETE...RETURNING / Redis GETDEL；[MemoryStateStore] 是进程内
+// 共享的可选便利实现），nil = 缺省 map，零行为变化。Client 侧恒以
+// CreatedAt+FlowTTL 复核，载体过期策略失效不致放行陈旧 state。
 //
 // # 用法
 //
