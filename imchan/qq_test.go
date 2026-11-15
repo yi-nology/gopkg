@@ -87,6 +87,37 @@ func TestQQProbe(t *testing.T) {
 	}
 }
 
+// TestQQFetchGateway /gateway 端点形态：鉴权头 + url 解析 + 非法响应显形。
+func TestQQFetchGateway(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"url":"wss://gw.example/ws"}`))
+	}))
+	defer srv.Close()
+	oldAPI := qqAPIBase
+	qqAPIBase = srv.URL
+	defer func() { qqAPIBase = oldAPI }()
+
+	q := NewQQChannel("qq-1", "app-1", "sec")
+	got, err := q.fetchGateway("at-1")
+	if err != nil || got != "wss://gw.example/ws" {
+		t.Fatalf("网关地址解析错: %q %v", got, err)
+	}
+	if gotPath != "/gateway" || gotAuth != "QQBot at-1" {
+		t.Fatalf("网关请求形态错: path=%s auth=%s", gotPath, gotAuth)
+	}
+
+	badSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer badSrv.Close()
+	qqAPIBase = badSrv.URL
+	if _, err := q.fetchGateway("at-1"); err == nil {
+		t.Fatal("缺 url 的网关响应应报错")
+	}
+}
+
 // TestQQWSGatewayLoop 网关全链：Identify → READY → 群/单聊事件分发 → 心跳/ACK →
 // 断链重连走 RESUME 续约（session_id+seq 接续）。假时钟让 1s 退避瞬时完成。
 func TestQQWSGatewayLoop(t *testing.T) {

@@ -275,7 +275,8 @@ func TestWecomAibotAuthFailTerminal(t *testing.T) {
 	}
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "连续认证失败 5 次") {
+		want := fmt.Sprintf("连续认证失败 %d 次", wecomAibotMaxAuthFail)
+		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("应终态显形连续认证失败: %v", err)
 		}
 	case <-time.After(5 * time.Second):
