@@ -28,6 +28,9 @@
 | `oidc` | OIDC 登录客户端：发现文档 + PKCE S256 + code 交换 + RS256 JWKS 验签（未知 kid 强刷一次）+ nonce 对账 + flow state TTL | bianque `internal/auth/oidc.go`（gopkg#8） |
 | `privacy` | GDPR 数据主体导出/删除骨架：归属键注册表（export/erase/anonymize/exempt）+ 字段剔除 + 分块删 + 墓碑 | bianque `internal/repo/repo_userdata.go`（gopkg#16） |
 | `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 改道（gopkg#3） |
+| `eventsrc` | 通用 webhook 事件源五段管道（鉴权→限频→过滤→模板→留痕）：Bearer/HMAC 二选一鉴权、每源滑动窗口、`eq/ne/contains/exists/regex` 过滤、`{{path}}` 模板、留痕与拒绝原因词表；`SourceStore`/`EventStore`/`Sink` 由宿主实现，管理面 CRUD/密钥轮换/清扫随包 | bianque internal/service/webhook 下沉（gopkg#14） |
+| `ticket` | 工单域适配器：Jira REST（评论/创建/流转/JQL 分页搜索，Cloud/Server 同构）+ PagerDuty Events v2 备注；`Poller` 逐源串行取单骨架（唯一索引去重、单源失败不阻塞） | bianque internal/service/ticket 下沉（gopkg#15） |
+| `credstage` | 凭证物化 Stager：`type:*`/`type:name` 引用解析、via 递归与环检测、原子落盘+写-后-剪、env 组装；渲染族 Interpolate/SSH/datasource/kubeconfig；加密面与类型词表由宿主注入 | bianque internal/credentials stage+render 下沉（gopkg#18） |
 | `kbgroup` | 知识组键提取与团队档路径判定：案例标题行 → 组键（去空白+小写归一）单源，写入去重与存量清理共用；`TeamSlugOf` 统一团队档路径语义（防跨队泄漏） | bianque `internal/kbgroup` 下沉（gopkg#10） |
 | `alertroute` | 告警入站判定核：标签路由匹配（空白路由=全匹配、坏 JSON=不命中）+ `(fingerprint, starts_at)` 幂等键（精确锚点，非滑动窗口） | bianque `internal/service/alert` 下沉（gopkg#9） |
 | `diagbundle` | 一键诊断支持包骨架：分节注册/遍历、配置白名单摘要与 URL 布尔化、事件截断、审计链校验结果/错误入包 | bianque `internal/service/hostdiag` 下沉（gopkg#17） |
