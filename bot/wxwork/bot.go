@@ -66,7 +66,7 @@ func (bot *WxWorkBot) SendRaw(msgBytes []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var wxWorkResp wxWorkResponse
 	err = json.Unmarshal(body, &wxWorkResp)

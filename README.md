@@ -11,7 +11,7 @@
 |---|---|---|
 | `oekit` | 框架原语——纯机制、零领域词、宿主注入策略 | logx / httpx / redisx / pkg |
 | `oagentkit` | AI agent 框架 | llm / guardx / queue |
-| **`yi-nology/gopkg`** | **业务共享件——产品能力、平台契约、领域内核** | IM 载荷 / license / 审批令牌 / 禅道 SDK |
+| **`yi-nology/gopkg`** | **业务共享件——产品能力、平台契约、领域内核** | IM 载荷 / license / 审批令牌 |
 
 **判据**：机制留框架仓，产品域概念进本仓。2026-11-14 的七个下沉提案按此分流——
 `auditchain`/`sse`/`canon`/`forward` 落 `oekit/pkg`，`im_payload`/`licensx`/`tokenx`
@@ -19,56 +19,35 @@
 
 ## 包清单
 
-### 业务能力（承自 `common/biz/*`）
-
-| 包 | 说明 |
-|---|---|
-| `biz/bot` | IM 机器人统一门面（企微/钉钉/飞书/蓝信）：`BotOne` 发送路径 + `payload.go` 纯载荷构造（`BuildIMPayload` 按渠道分发） |
-| `biz/email` | SMTP 发送器 |
-| `biz/git` | 本地 git 仓库分支/标签读写与打 tag 推送 |
-| `biz/online-git` | GitHub / GitLab / Gitea 平台统一 API 门面（provider 注册表） |
-| `biz/zentao` | 禅道 API 客户端 |
-| `biz/gps` `biz/identity` `biz/phone` `biz/vehicle` | 车牌 / 身份证 / 手机号校验 |
-
-> `common/biz/lock` **已退役**，未接档——见下方重构表。
-
-### 产品域内核（自 `oekit/pkg` 改道）
-
 | 包 | 说明 | 来源 |
 |---|---|---|
-| `biz/bot`（`payload.go`） | IM 载荷构造——企微/钉钉/飞书 JSON 线格式单源，纯函数零网络 | oekit/pkg#485 / gopkg#1 |
-| `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 / gopkg#2 |
-| `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 / gopkg#3 |
+| `bot` | IM 机器人统一门面（企微/钉钉/飞书/蓝信）：`BotOne` 发送路径 + `payload.go` 纯载荷构造（`BuildIMPayload` 按渠道分发，纯函数零网络） | common/biz/bot 接档 + oekit/pkg#485 改道（gopkg#1） |
+| `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 改道（gopkg#2） |
+| `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 改道（gopkg#3） |
 
-## 依赖 oekit 的重构（2026-11-14）
+`bot` 自 `biz/bot` 提升为顶层包（2026-11-15）：业务侧的「平台线格式契约」归它一个门面，
+其余承自 `common/biz/*` 的模块经核查**全仓零引用**，已删除（见下方「与 common 的关系」）。
 
-本仓是 `common` 归档后的重建，顺手把 `common` 里手搓的件换成 oekit 单源：
+## 与 common 的关系（2026-11-14 接档 → 2026-11-15 收口）
 
-| 原实现 | 现在 | 动因 |
-|---|---|---|
-| `utils/xlogger`（7 行自造接口） | **`oekit/logx`**，包级 `logx.Delegating("组件名")` | 红线：库包级 logger 必须 `Delegating`，禁 `Default()`/`WithService`（service name 属消费方） |
-| `biz/lock`（自造 SetNX + 自旋） | **退役 → `oekit/redisx/distlock`**（契约 `oekit/pkg/distlock`） | 原实现三缺陷：`UpWait` 收 ctx 却从不检查、固定 100ms 自旋无退避无上限、`Down` 无条件 DEL 无法校验持有者 |
-| 三家 provider 裸 `&http.Client{}` | **`oekit/httpx`** 受治理客户端（`biz/online-git/httpclient.go` 单源） | gitlab/gitea **完全零超时**，对端挂起即永久阻塞；gitea 还只在 `InsecureSkipTLS` 分支才下发自定义 client |
-
-未替换的部分与理由：
-
-- **`biz/bot` 的 HTTP 不动**：四家已有正确的 `Timeout: 5s`，换 httpx 反而要把超时交给
-  httpx 分项上限、且要调用方传 Prometheus registry 才有额外收益——对 fire-and-forget 的
-  webhook 发送是净负担。等真需要指标/链路时再接。
-- **165 处 `fmt.Errorf` 未批量改 `oekit/pkg/errors`**：`BizError` 是服务 handler 出口的
-  载体，对本仓这类库是错配；纯换 `%w` 包装是零收益 churn。
-
-## 迁移自 `common`
-
-```diff
-- import "github.com/yi-nology/common/biz/bot"
-+ import "github.com/yi-nology/gopkg/biz/bot"
-```
+接档自 `common` 的内容只保留 `bot`（IM 机器人门面）。未接档 / 已删除的：
 
 - `utils/*`（xstrings/xtime/xjson…）**不接档**——`common` 归档时通用工具已交棒 `oekit/pkg`
   （stringx/timex/encoding…），重复接档只会造第二份单源。
-- `biz/lock` 不再提供，直接用 `oekit/redisx/distlock`。
-- `biz/vehicle`、`biz/git` 的方法签名去掉了 `log` 参数（logger 归包，不归调用点）。
+- `biz/lock` **退役**——自造 SetNX + 自旋改用 `oekit/redisx/distlock`（契约 `oekit/pkg/distlock`）。
+  原实现三缺陷：`UpWait` 收 ctx 却从不检查、固定 100ms 自旋无退避无上限、`Down` 无条件 DEL 无法校验持有者。
+- `biz/email` / `biz/git` / `biz/online-git` / `biz/zentao` / `biz/gps` / `biz/identity` /
+  `biz/phone` / `biz/vehicle` **已删除**：接档后全仓零引用，属归档仓的业务残留，不在本仓定位内。
+  需要时按「产品域内核」判据单独立单下沉，不整包搬运。
+- `bot` 的 HTTP **不动**：四家已有正确的 `Timeout: 5s`，换 `oekit/httpx` 要把超时交给分项上限、
+  且要调用方传 Prometheus registry 才有收益——对 fire-and-forget 的 webhook 发送是净负担。
+
+## 迁移自 common
+
+```diff
+- import "github.com/yi-nology/common/biz/bot"
++ import "github.com/yi-nology/gopkg/bot"
+```
 
 ## 开发
 
@@ -78,5 +57,3 @@ go vet ./...
 gofmt -l .
 go test ./... -count=1
 ```
-
-CI 见 `.github/workflows/ci.yml`（push main / tag / PR 触发）。

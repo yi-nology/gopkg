@@ -104,7 +104,7 @@ func (l *LarkBot) SendRaw(msgBytes []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -163,7 +163,6 @@ func (l *LarkBot) injectKeyword(msgBytes []byte) []byte {
 				if zhCn, ok := post["zh_cn"].(map[string]interface{}); ok {
 					if title, ok := zhCn["title"].(string); ok {
 						zhCn["title"] = l.Keywords + " " + title
-						injected = true
 					}
 				}
 			}
