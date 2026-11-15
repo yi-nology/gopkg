@@ -18,7 +18,9 @@
 //
 // # 安全判定（CompleteLogin）
 //
-//  1. state 单次消费 + FlowTTL：回调先删后验，重放同一 state 直接落空；
+//  1. state 单次消费 + FlowTTL：StateStore.Take 原子取走（默认内存实现
+//     删除并返回），Client 再用 Flow.CreatedAt 复核 TTL；重放同一 state
+//     直接落空；
 //  2. code 交换携带 PKCE verifier（S256 challenge 在 BeginLogin 生成，
 //     verifier 32 字节熵）与 client_secret；
 //  3. id_token 强制 alg=RS256（拒绝 none/HS* 降级），公钥按 kid 从 JWKS
@@ -29,9 +31,11 @@
 //
 // 发现文档同样校验 issuer 精确匹配（伪造/混包防线），且 authorization/
 // token/jwks 三个端点缺一即失败。发现文档与 JWKS 进程内缓存（默认
-// 10min/1h）；flow state 是进程内 map（默认 TTL 10min + BeginLogin 时惰性
-// GC）——多副本部署需要粘性会话或宿主自行做跨副本 state 共享，单机/粘性
-// 代理形态不受影响。
+// 10min/1h）；flow state 默认存进程内 MemoryStateStore（默认 TTL 10min +
+// 惰性 GC）。多副本无粘性会话时，宿主把 Config.StateStore 换成共享实现
+// （DB/Redis；Take 须原子单次消费）即可；nil 时单机/粘性代理行为不变。
+// Client 始终用 Flow.CreatedAt 复核 FlowTTL——Store 过期策略失效不会让过期
+// state 生效。
 //
 // # 用法
 //

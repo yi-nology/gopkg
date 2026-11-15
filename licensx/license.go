@@ -22,6 +22,13 @@ var (
 	ErrExpired = errors.New("license 已过期")
 	// ErrRevoked license 序列号在吊销清单内（清单由宿主从签发侧分发/拉取）。
 	ErrRevoked = errors.New("license 已吊销")
+	// ErrNoFile 未配置 license 文件路径，或路径指向的文件不存在（无授权运行）。
+	ErrNoFile = errors.New("license 文件不存在或未配置")
+	// ErrUnreadable license 文件存在但读取失败（权限/IO 错误）。
+	ErrUnreadable = errors.New("license 文件读取失败")
+	// ErrParseFailed license 文件读取成功但 JSON 解析失败（文件损坏或不是
+	// license JSON）。
+	ErrParseFailed = errors.New("license 文件解析失败")
 )
 
 // License license 文件内容（JSON 信封）：载荷是宿主定义的任意 JSON，签名覆盖
@@ -167,7 +174,7 @@ func (l *License) Decode(v any) error {
 }
 
 // Status license 加载结果（机制结论，不含档位决策——Valid → 宿主档位的
-// 映射是产品侧的事）。自解释：非有效形态必带 Reason（降级不静默）。
+// 映射是产品侧的事）。自解释：非有效形态必带 Reason 与 Err（降级不静默）。
 type Status struct {
 	// Loaded 文件存在且 JSON 解析成功（license 骨架可读）。
 	Loaded bool `json:"loaded"`
@@ -181,33 +188,51 @@ type Status struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 	// Reason 未装/无效/已过期/已吊销的原因（完全有效时为空）——不静默。
 	Reason string `json:"reason,omitempty"`
+	// Err 非 Valid 时的原始错误链：errors.Is 判定 ErrNoFile / ErrUnreadable /
+	// ErrParseFailed / ErrSignatureInvalid / ErrExpired / ErrRevoked（底层
+	// fs/JSON 错误同链可判）。Reason 是给人读的同一判定文案；JSON 输出忽略
+	// 本字段（error 不可序列化，诊断面读 reason）。Valid 时 Err 为 nil。
+	Err error `json:"-"`
 }
 
 // Load 加载并校验 license 文件（机制内核；公钥由宿主注入——编译期常量或
 // 配置都是宿主策略）。语义：
-//   - path 为空或文件不存在 → 非 Valid + 明确 Reason（无授权运行，不阻塞
-//     启动——要让运维**看见**授权状态，而不是让人只知道「起不来」）；
-//   - 文件存在但解析失败/验签失败/已过期/已吊销 → Loaded 可读 + 非 Valid +
-//     明确 Reason（防篡改靠「无效 license 拿不到授权能力」，由宿主把
-//     Valid 映射到档位兑现）。
+//   - path 为空或文件不存在 → 非 Valid + 明确 Reason 与 Err（无授权运行，
+//     不阻塞启动——要让运维**看见**授权状态，而不是让人只知道「起不来」）；
+//   - 文件存在但解析失败/验签失败/已过期/已吊销 → 按可读性置 Loaded + 非
+//     Valid + 明确 Reason 与类型化 Err 链（防篡改靠「无效 license 拿不到
+//     授权能力」，由宿主把 Valid 映射到档位兑现）。
 func Load(path string, pub ed25519.PublicKey, now time.Time, opts ...ValidateOption) Status {
 	if path == "" {
-		return Status{Reason: "未配置 license 文件（无授权运行）"}
+		return Status{
+			Reason: "未配置 license 文件（无授权运行）",
+			Err:    fmt.Errorf("%w: 未配置 license 文件路径", ErrNoFile),
+		}
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Status{Reason: "license 文件不存在（无授权运行）"}
+			return Status{
+				Reason: "license 文件不存在（无授权运行）",
+				Err:    fmt.Errorf("%w: %w", ErrNoFile, err),
+			}
 		}
-		return Status{Reason: "license 文件读取失败: " + err.Error()}
+		return Status{
+			Reason: "license 文件读取失败: " + err.Error(),
+			Err:    fmt.Errorf("%w: %w", ErrUnreadable, err),
+		}
 	}
 	var l License
 	if err := json.Unmarshal(raw, &l); err != nil {
-		return Status{Reason: "license 文件解析失败: " + err.Error()}
+		return Status{
+			Reason: "license 文件解析失败: " + err.Error(),
+			Err:    fmt.Errorf("%w: %w", ErrParseFailed, err),
+		}
 	}
 	st := Status{Loaded: true, Serial: l.Serial, ExpiresAt: l.ExpiresAt, Payload: l.Payload}
 	if err := l.Validate(pub, now, opts...); err != nil {
 		st.Reason = err.Error()
+		st.Err = err
 		return st
 	}
 	st.Valid = true
