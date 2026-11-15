@@ -33,11 +33,6 @@ func noopTombstone() *fakeTombstone { return &fakeTombstone{} }
 
 func fixedClock() func() time.Time { return func() time.Time { return testNow } }
 
-// errCollector 采集失败闭包。
-func errCollector(err error) Collector {
-	return func(context.Context, string, string) ([]Record, error) { return nil, err }
-}
-
 // TestNewRegistryRejectsBadConfig 注册表 fail-closed：空表、重复表、零/未知
 // 策略、Exempt 混用、缺闭包、缺墓碑、坏分块大小、坏 Option 全部构造期拒绝。
 func TestNewRegistryRejectsBadConfig(t *testing.T) {
