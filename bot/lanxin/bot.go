@@ -91,7 +91,7 @@ func (r *Robot) SendRaw(msgBytes []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -137,7 +137,6 @@ func (r *Robot) injectKeyword(msgBytes []byte) []byte {
 		if md, ok := raw["markdown"].(map[string]interface{}); ok {
 			if text, ok := md["text"].(string); ok {
 				md["text"] = r.Keywords + "\n" + text
-				injected = true
 			}
 		}
 	}

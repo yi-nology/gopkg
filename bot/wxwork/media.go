@@ -50,8 +50,12 @@ func (bot *WxWorkBot) UploadMedia(fileName string, fileBytes *[]byte) (*Uploaded
 	if err != nil {
 		return nil, err
 	}
-	io.Copy(part, bytes.NewReader(*fileBytes))
-	writer.Close()
+	if _, err := io.Copy(part, bytes.NewReader(*fileBytes)); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest(http.MethodPost, uploadApiUrl(&bot.Key), body)
 	if err != nil {
@@ -63,7 +67,7 @@ func (bot *WxWorkBot) UploadMedia(fileName string, fileBytes *[]byte) (*Uploaded
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	var wxWorkResp uploadedMediaResponse
 	err = json.Unmarshal(respBody, &wxWorkResp)

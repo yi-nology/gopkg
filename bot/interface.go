@@ -1,10 +1,10 @@
 package bot
 
 import (
-	"github.com/yi-nology/gopkg/biz/bot/dingtalk"
-	"github.com/yi-nology/gopkg/biz/bot/lanxin"
-	"github.com/yi-nology/gopkg/biz/bot/lark"
-	"github.com/yi-nology/gopkg/biz/bot/wxwork"
+	"github.com/yi-nology/gopkg/bot/dingtalk"
+	"github.com/yi-nology/gopkg/bot/lanxin"
+	"github.com/yi-nology/gopkg/bot/lark"
+	"github.com/yi-nology/gopkg/bot/wxwork"
 )
 
 // BotOne 机器人统一接口
