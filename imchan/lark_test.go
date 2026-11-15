@@ -4,6 +4,8 @@ package imchan
 // file 惰性附件正形态，nil/富媒体/空正文/坏 JSON 负形态，探活假端点。
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,6 +155,9 @@ func TestLarkSendClosed(t *testing.T) {
 	}
 	if err := l.Send("oc1", ChatP2P, "hi"); err != ErrClosed {
 		t.Fatalf("Close 后应 ErrClosed: %v", err)
+	}
+	if err := l.Start(context.Background(), func(InboundMessage) {}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Close 后 Start 应 ErrClosed: %v", err)
 	}
 	if l.Connected() {
 		t.Fatal("Close 后不应 Connected")

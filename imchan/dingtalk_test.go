@@ -5,6 +5,7 @@ package imchan
 // 硬编码官方网关，离线只覆盖探活/解析/回投三层（与 bianque 同策略）。
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -135,6 +136,9 @@ func TestDingTalkClose(t *testing.T) {
 	}
 	if d.Connected() {
 		t.Fatal("Close 后不应 Connected")
+	}
+	if err := d.Start(context.Background(), func(InboundMessage) {}); err != ErrClosed {
+		t.Fatalf("Close 后 Start 应 ErrClosed: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatalf("Close 应幂等: %v", err)

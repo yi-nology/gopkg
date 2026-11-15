@@ -249,6 +249,9 @@ func TestWecomClose(t *testing.T) {
 	if err := w.Start(context.Background(), func(InboundMessage) {}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Close 后 Start 应返回 ErrClosed: %v", err)
 	}
+	if err := w.Send("user-1", ChatP2P, "hi"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Close 后回投应 ErrClosed: %v", err)
+	}
 	if err := w.Close(); err != nil {
 		t.Fatalf("Close 应幂等: %v", err)
 	}

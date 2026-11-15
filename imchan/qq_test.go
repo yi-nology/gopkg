@@ -235,6 +235,9 @@ func TestQQCloseInterruptsStart(t *testing.T) {
 	if q.Connected() {
 		t.Fatal("Close 后不应 Connected")
 	}
+	if err := q.Send("grp-1", ChatGroup, "hi"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Close 后回投应 ErrClosed: %v", err)
+	}
 	if err := q.Close(); err != nil {
 		t.Fatalf("Close 应幂等: %v", err)
 	}

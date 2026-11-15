@@ -294,6 +294,58 @@ func TestWecomAibotSendBeforeConnected(t *testing.T) {
 	}
 }
 
+// TestWecomAibotCloseInterruptsStart Close 打断运行中的 Start 并返回 ErrClosed。
+func TestWecomAibotCloseInterruptsStart(t *testing.T) {
+	oldURL := wecomAibotWSURL
+	oldTO := wecomAibotProbeTimeout
+	wecomAibotProbeTimeout = 4 * time.Second
+	defer func() {
+		wecomAibotWSURL = oldURL
+		wecomAibotProbeTimeout = oldTO
+	}()
+
+	srv, conns := fakeAibotGateway(t)
+	defer srv.Close()
+	wecomAibotWSURL = "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	w := NewWecomAibotChannel("aibot-1", "bot-1", "sec-1")
+	w.clock = &fakeClock{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Start(ctx, func(InboundMessage) {}) }()
+
+	cProbe := <-conns
+	aibotAuthHandshake(t, cProbe, "bot-1", "sec-1", true)
+	cRun := <-conns
+	aibotAuthHandshake(t, cRun, "bot-1", "sec-1", true)
+	waitFor(t, 2*time.Second, w.Connected)
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("Close 后 Start 应返回 ErrClosed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close 未打断 Start")
+	}
+	if w.Connected() {
+		t.Fatal("Close 后不应 Connected")
+	}
+	if err := w.Send("u1", ChatP2P, "hi"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Close 后回投应 ErrClosed: %v", err)
+	}
+	if err := w.Start(context.Background(), func(InboundMessage) {}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Close 后 Start 应 ErrClosed: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close 应幂等: %v", err)
+	}
+}
+
 // TestIsAibotAuthErrBySentinel 认证判定读 error 链的哨兵，不看文案。
 func TestIsAibotAuthErrBySentinel(t *testing.T) {
 	err := aibotAuthError(95001, "invalid credential")
