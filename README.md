@@ -25,6 +25,7 @@
 | `licensx` | Ed25519 license 签发/验签——载荷泛型 + 类型化哨兵 | oekit/pkg#486 改道（gopkg#2） |
 | `tokenx` | 签名能力令牌（HMAC 载荷绑定 + 命令集规范化哈希） | oekit/pkg#487 改道（gopkg#3） |
 | `acpbridge` | ACP（Agent Client Protocol）入站桥：stdio JSON-RPC 2.0（initialize/session/new/session/prompt），宿主会话经 `Host` 接口注入 | 下沉提案（gopkg#12） |
+| `webhooksrc` | 通用 webhook 事件源五段管道（鉴权→限频→过滤→模板→投递），每步留痕；源配置/过滤算子/模板渲染，存储与 `Sink` 宿主注入 | 下沉提案（gopkg#14） |
 
 `bot` 自 `biz/bot` 提升为顶层包（2026-11-15）：业务侧的「平台线格式契约」归它一个门面，
 其余承自 `common/biz/*` 的模块经核查**全仓零引用**，已删除（见下方「与 common 的关系」）。
