@@ -6,7 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/larksuite/oapi-sdk-go/v3 v3.12.2
 	github.com/oekit/concurrency v0.37.0
-	github.com/oekit/pkg v0.50.0
+	github.com/oekit/pkg v0.61.5
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
 	gopkg.in/yaml.v3 v3.0.1
 )
