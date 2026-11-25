@@ -12,8 +12,8 @@ github.com/larksuite/oapi-sdk-go/v3 v3.12.2 h1:YjIVkSXW3TZOL3HCdJdTKYYP3ZBIM9ql9
 github.com/larksuite/oapi-sdk-go/v3 v3.12.2/go.mod h1:F1nwLfYBSKvD8mS/OFw90Gr+V4RIugPBR44m/ThA5jg=
 github.com/oekit/concurrency v0.37.0 h1:u5ZfRSdXuRxM4NJhsShOtSFSPK0WTqphmhdXahMgnd4=
 github.com/oekit/concurrency v0.37.0/go.mod h1:9TJXufRRJMu5JvcqaavJLqq18vnwIeLgj5mAF64y46w=
-github.com/oekit/pkg v0.50.0 h1:C6R6JAM+ad5WjQeRQCqtfNAW4jzn1N2y17hFg9h60AQ=
-github.com/oekit/pkg v0.50.0/go.mod h1:Cr6sJpBX2a0gAIgLa32+NY69h/UZtuN6L1ZdXtP9upo=
+github.com/oekit/pkg v0.61.5 h1:gkHqNb0kSZOEu6CC1cs7iYLFv6kzWWDvNLz/jaI501o=
+github.com/oekit/pkg v0.61.5/go.mod h1:Cr6sJpBX2a0gAIgLa32+NY69h/UZtuN6L1ZdXtP9upo=
 github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1 h1:Lb/Uzkiw2Ugt2Xf03J5wmv81PdkYOiWbI8CNBi1boC8=
 github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1/go.mod h1:ln3IqPYYocZbYvl9TAOrG/cxGR9xcn4pnZRLdCTEGEU=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
